@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource path="res://export_smoke.gd" type="Script" id="1_nta_export"]
+
+[node name="NativeTurnAnalyzerExportSmoke" type="Node"]
+script = ExtResource("1_nta_export")

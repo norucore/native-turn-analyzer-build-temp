@@ -1,0 +1,35 @@
+# mode	surface	lemma	particle	source_synset	action	relation	confidence	role_compatibility	precondition_delta	effect_delta
+promote	locate	locate		02286204	search	EQUIVALENT	0.97	1.00		
+promote	fabricate	fabricate		01653442	create	SPECIALIZATION	0.91	0.95		resource_cost
+promote	stroll to	stroll	to	01917980	move_to	SPECIALIZATION	0.93	0.98		pace
+promote	retrieve	retrieve		01433991	pickup	EQUIVALENT	0.96	0.98		
+promote	release	release		01474550	drop	APPROXIMATE_EFFECT	0.87	0.94		placement_unspecified
+promote	offer	offer		02296726	give	APPROXIMATE_EFFECT	0.86	0.96		acceptance_not_implied
+promote	wield	wield		02204564	equip	SPECIALIZATION	0.94	0.96	weapon_required	
+promote	scrutinize	scrutinize		02153387	examine	SPECIALIZATION	0.95	0.99		inspection_depth
+promote	pivot	pivot		02046572	turn_around	APPROXIMATE_EFFECT	0.84	0.91		rotation_extent
+promote	recline	recline		01547641	lie_down	APPROXIMATE_EFFECT	0.88	0.95		support_posture
+promote	perch	perch		01543731	sit	SPECIALIZATION	0.90	0.93	support_required	
+promote	rise	rise		01968569	stand	APPROXIMATE_EFFECT	0.91	0.96		starting_posture
+promote	extinguish	extinguish		00478217	deactivate	APPROXIMATE_EFFECT	0.83	0.94	active_flame	state_scope
+promote	fracture	fracture		00203739	break	SPECIALIZATION	0.94	0.96	fragile_target	
+promote	recover	recover		00092690	rest	APPROXIMATE_EFFECT	0.78	0.90	fatigue_or_injury	recovery_scope
+promote	blend	blend		00394813	combine	EQUIVALENT	0.97	0.99		
+promote	near	near		02053941	approach	EQUIVALENT	0.96	0.98		
+promote	dismount	dismount		01958452	descend	APPROXIMATE_EFFECT	0.82	0.90	mounted_state	destination_scope
+promote	ascend	ascend		01969216	climb	APPROXIMATE_EFFECT	0.89	0.94	climbable_path	movement_method
+promote	step on	step	on	01928838	break	APPROXIMATE_EFFECT	0.72	0.88	fragile_target	destruction_not_guaranteed
+# "draw" e' anche sfoderare (senso 01995211, glossa WordNet "draw a weapon"): accanto a tirare, e sceglie l'oggetto (tracker Analizzatore #50).
+promote	draw	draw		01995211	wield	EQUIVALENT	0.96	0.95	weapon_required	
+forbid	pick up	pick	up	00676450	break	APPROXIMATE_EFFECT	0.00	0.00		
+# "put down" e' anche sopprimere un animale (senso 01326528 -> destroy): in chat "put down the cup" e' posare, mai distruggere (tracker #52).
+forbid	put down	put_down	down	01326528	destroy	APPROXIMATE_EFFECT	0.00	0.00		
+# "pass over" in chat e' saltare o passare accanto, non passare lo straccio (tracker Analizzatore #95).
+forbid	pass over	pass_over	over	01392237	wipe	EQUIVALENT	0.00	0.00		
+# "get the book", "can you get it": detto al personaggio "get" e' andare a prendere (senso 01433294, "get me those books"), non ricevere. Misurato su 338 messaggi esterni il 2026-09-15.
+promote	get	get		01433294	retrieve	EQUIVALENT	0.94	0.95		
+# "move the plant closer to the window": spostare una cosa e' metterla altrove (senso 01850315, "cause to move or shift into a new position").
+promote	move	move		01850315	place	APPROXIMATE_EFFECT	0.88	0.93		destination_optional
+# Righe `generated`: relazione, confidenza e compatibilita' dei sinonimi generati da WordNet (anchor_sense = il senso dell'ancora, other_sense = gli altri sensi ammessi).
+generated	anchor_sense					EQUIVALENT	0.96	0.95		
+generated	other_sense					EQUIVALENT	0.88	0.95		

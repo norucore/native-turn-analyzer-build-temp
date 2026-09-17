@@ -1,0 +1,10 @@
+{
+	"_": "Minimal Godot API surface used by NativeTurnAnalyzer.",
+	"type": "feature_profile",
+	"enabled_classes": [
+		"Engine",
+		"OS",
+		"RefCounted",
+		"Time"
+	]
+}
