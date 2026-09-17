@@ -33,3 +33,15 @@ promote	move	move		01850315	place	APPROXIMATE_EFFECT	0.88	0.93		destination_opti
 # Righe `generated`: relazione, confidenza e compatibilita' dei sinonimi generati da WordNet (anchor_sense = il senso dell'ancora, other_sense = gli altri sensi ammessi).
 generated	anchor_sense					EQUIVALENT	0.96	0.95		
 generated	other_sense					EQUIVALENT	0.88	0.95		
+# Verbi di forza aggiunti il 2026-09-17 (calciare, pestare, schiacciare, macinare...): questi sinonimi WordNet sono altri sensi
+# in chat ('plug in the charger', 'nail it', 'run into a friend', 'the music was blasting'), non colpi. Tracker Analizzatore #103.
+forbid	blast	blast		01401772	smash	EQUIVALENT	0.00	0.00		
+forbid	boom	boom		01401772	smash	EQUIVALENT	0.00	0.00		
+forbid	bray	bray		00331082	grind	EQUIVALENT	0.00	0.00		
+forbid	collide with	collide_with		01236164	hit	EQUIVALENT	0.00	0.00		
+forbid	dash	dash		00335923	smash	EQUIVALENT	0.00	0.00		
+forbid	impinge on	impinge_on	on	01236164	hit	EQUIVALENT	0.00	0.00		
+forbid	nail	nail		01401772	smash	EQUIVALENT	0.00	0.00		
+forbid	perforate	perforate		01442779	punch	EQUIVALENT	0.00	0.00		
+forbid	plug	plug		01415285	punch	EQUIVALENT	0.00	0.00		
+forbid	run into	run_into		01236164	hit	EQUIVALENT	0.00	0.00		

@@ -224,6 +224,11 @@ String trim_target_span(String target) {
 	for (const char *particle : {" back", " away", " up", " down", " over", " out", " off"}) {
 		if (target.ends_with(particle)) target = target.left(target.length() - String(particle).length()).strip_edges();
 	}
+	// Lo stato in cui finisce la cosa non e' la cosa: "kick the locker shut", "fold them closed",
+	// "pull the rope loose" (tracker Analizzatore #84, #103). Classe chiusa di complementi risultativi.
+	for (const char *result : {" shut", " closed", " open", " loose", " free", " apart", " flat", " clean"}) {
+		if (target.ends_with(result) && target.length() > String(result).length()) target = target.left(target.length() - String(result).length()).strip_edges();
+	}
 	return target;
 }
 
@@ -233,7 +238,8 @@ String trim_target_span(String target) {
 void split_object_location(String &target, String &location) {
 	int split_at = -1;
 	int split_length = 0;
-	for (const char *raw_preposition : {" on ", " in ", " into ", " onto ", " inside ", " under ", " next to ", " with ", " behind "}) {
+	// "throw your hat at the zombie": anche la direzione separa (tracker Analizzatore #103).
+	for (const char *raw_preposition : {" on ", " in ", " into ", " onto ", " inside ", " under ", " next to ", " with ", " behind ", " at ", " toward ", " towards ", " against ", " across ", " through ", " over "}) {
 		const String preposition = raw_preposition;
 		const int found = target.find(preposition);
 		if (found <= 0 || (split_at >= 0 && found >= split_at)) continue;
@@ -1708,6 +1714,14 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 		target = "user";
 		recipient = "user";
 		Array evidence = frame["parser_evidence"]; evidence.append(best == "hit five" ? "typo_resolution:hit_five_to_high_five" : "gesture:addressee_user"); frame["parser_evidence"] = evidence;
+	}
+	// "break free", "get loose": il verbo con il solo risultato non ha una cosa da toccare. E' un gesto
+	// del racconto, non un ordine su un oggetto: niente chiarimento (tracker Analizzatore #103).
+	if (string_array({"free", "loose", "shut", "closed", "open", "apart"}).has(target)) {
+		frame["frame_type"] = "conversation"; frame["speech_act"] = "statement"; frame["surface_kind"] = "statement";
+		roles["query_kind"] = "action_mention"; roles["action"] = action; roles["target_mode"] = "optional"; frame["semantic_roles"] = roles;
+		Array evidence = frame["parser_evidence"]; evidence.append("resultative_without_object"); frame["parser_evidence"] = evidence;
+		return frame;
 	}
 	const char32_t target_last = target.is_empty() ? 0 : target.unicode_at(target.length() - 1);
 	const bool broken_target_span = !has_word_character(target) || target_last == U'—' || target_last == U'-';
