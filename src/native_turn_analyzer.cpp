@@ -406,6 +406,29 @@ int number_value(const String &token) {
 	return 0;
 }
 
+// Che tipo di condizione pone la frase.
+//
+// `conditional` da solo non basta per decidere se un'azione si puo' eseguire: si alza anche
+// su "would", e "would you open the door?" e' una richiesta gentile, non una condizione da
+// verificare. Qui si separano le due cose, perche' riconoscere la struttura della frase e'
+// lavoro dell'analizzatore e non del Brain (contratto, regola 19). Fino al 2026-09-20 la
+// distinzione stava in GDScript, e il Brain doveva rifarsi la grammatica da solo.
+//
+// Le congiunzioni condizionali dell'inglese sono una classe chiusa: sono queste, e non ne
+// nascono di nuove. E' il motivo per cui un elenco qui e' la grammatica e non debito, al
+// contrario di un elenco di verbi.
+//
+//   "explicit" -> "if the locker is locked, kick it": c'e' una condizione da verificare.
+//   "modal"    -> "would you open the door?": e' cortesia, si esegue.
+String condition_kind(const Array &tokens) {
+	// "whether" non c'e' di proposito: "check whether the door is locked" e' una domanda
+	// indiretta dentro un'azione, non una condizione che tiene ferma l'azione.
+	static const char *explicit_markers[] = {"if", "unless", "provided", "providing", "assuming", "supposing"};
+	for (int i = 0; i < 6; ++i) if (tokens.has(String(explicit_markers[i]))) return "explicit";
+	if (tokens.has("would") || tokens.has("could")) return "modal";
+	return "";
+}
+
 bool is_retraction(const String &clause) {
 	String lower = clause.to_lower().strip_edges();
 	bool stripped = true;
@@ -1068,7 +1091,7 @@ Dictionary NativeTurnAnalyzer::analyze_turn(const String &raw_input, const Dicti
 			Dictionary unit; unit["predicate_id"] = String("%s_predicate_%03d") % Array::make(clause_id, unit_index + 1); unit["text"] = unit_text; unit["start_index"] = start + unit_relative_start; unit["end_index"] = start + unit_relative_start + unit_text.length(); unit["speech_act"] = unit_speech_act; unit["semantic_roles"] = extract_clause_roles(unit_text, unit_tokens, unit_lemmas, unit_speech_act); unit["dependency_refs"] = unit_dependencies; predicate_units.append(unit);
 		}
 		clause["speech_act"] = speech_act; clause["semantic_roles"] = semantic_roles; clause["dependency_refs"] = dependency_refs; clause["predicate_units"] = predicate_units; clause_items.append(clause);
-		Dictionary lc; lc["clause_id"] = clause_id; lc["segment_id"] = "segment_1"; lc["text"] = text; lc["start_index"] = start; lc["end_index"] = start + text.length(); lc["tokens"] = tokens; lc["lemmas"] = lemmas; lc["speech_act"] = speech_act; lc["semantic_roles"] = semantic_roles; lc["dependency_refs"] = dependency_refs; lc["predicate_units"] = predicate_units; lc["question"] = speech_act == "question"; lc["negated"] = tokens.has("not") || tokens.has("never") || text.to_lower().begins_with("don't "); lc["conditional"] = tokens.has("if") || tokens.has("would"); lc["modal"] = modal; lc["references"] = references; linguistic.append(lc);
+		Dictionary lc; lc["clause_id"] = clause_id; lc["segment_id"] = "segment_1"; lc["text"] = text; lc["start_index"] = start; lc["end_index"] = start + text.length(); lc["tokens"] = tokens; lc["lemmas"] = lemmas; lc["speech_act"] = speech_act; lc["semantic_roles"] = semantic_roles; lc["dependency_refs"] = dependency_refs; lc["predicate_units"] = predicate_units; lc["question"] = speech_act == "question"; lc["negated"] = tokens.has("not") || tokens.has("never") || text.to_lower().begins_with("don't "); lc["conditional"] = tokens.has("if") || tokens.has("would"); lc["condition_kind"] = condition_kind(tokens); lc["modal"] = modal; lc["references"] = references; linguistic.append(lc);
 	}
 	String segment_surface = "statement";
 	for (int i = 0; i < linguistic.size(); ++i) {

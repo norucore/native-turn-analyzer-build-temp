@@ -14,6 +14,7 @@ shelf#1	placing_surface,fixed_in_place
 counter#1	placing_surface,fixed_in_place
 counter#4	placing_surface,container,heavy
 box#1	container,openable,portable
+locker#1	container,openable,fixed_in_place
 bag#1	container,openable,portable
 bag#4	container,openable,handheld
 bag#6	container,openable,portable
@@ -31,6 +32,7 @@ clothing#1	handheld
 garment#1	wearable_body
 headdress#1	wearable_head
 footwear#2	wearable_feet
+hosiery#1	wearable_feet,handheld
 glove#2	wearable_hands
 jewelry#1	wearable_accessory,handheld
 trouser#1	wearable_legs
@@ -52,7 +54,7 @@ publication#1	readable,handheld
 letter#1	readable,handheld
 footwear#2	handheld
 building#1	place
-room#1	place
+room#1	place	locker#1
 road#1	place
 floor#1	placing_surface,lying_surface,fixed_in_place
 wall#1	fixed_in_place
