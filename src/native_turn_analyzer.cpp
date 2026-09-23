@@ -210,7 +210,7 @@ String trim_target_span(String target) {
 		// "pass me the envelope" e' il destinatario e in "hug me" e' il bersaglio, e la
 		// differenza e' posizionale, non lessicale. Se ne occupa
 		// `extract_give_recipient`, che quel ruolo lo sa gia' leggere.
-		for (const char *prefix : {"the ", "a ", "an ", "your ", "my ", "to ", "on ", "at ", "in ", "from ", "of ",
+		for (const char *prefix : {"the ", "a ", "an ", "your ", "my ", "to ", "on ", "at ", "in ", "from ", "of ", "across ", "through ", "around ", "along ",
 			"back ", "up ", "down ", "out ", "off ", "over "}) {
 			if (target.begins_with(prefix)) {
 				target = target.trim_prefix(prefix).strip_edges();
@@ -887,8 +887,14 @@ Dictionary NativeTurnAnalyzer::extract_clause_roles(const String &text, const Ar
 		if (!pronoun_recipient.is_empty() && !payload.strip_edges().is_empty()) recipient = pronoun_recipient;
 		else payload = before_recipient;
 	}
+	// Cosa e posto si separano come nel compilatore (`split_object_location`): "plate it with the
+	// vegetables", "organize them on the rack". Fino al 2026-09-23 il ponte portava tutta la coda
+	// come bersaglio, e il personaggio chiedeva "I don't see the it with the vegetables here".
+	String location;
+	split_object_location(payload, location);
 	roles["object"] = payload;
 	roles["object_or_class"] = payload;
+	if (!location.is_empty()) roles["destination"] = location;
 	roles["recipient_or_direction"] = recipient;
 	roles["target_mode"] = payload.is_empty() ? "optional" : "required";
 	roles["speech_act"] = speech_act;
