@@ -24,7 +24,9 @@ Le regole, nessun elenco di parole:
      particella avverbiale si stacca dal verbo ("lead him astray"); "call for" e
      "think of" hanno una preposizione, che non si stacca, e restano senza;
   5. le righe scritte a mano (`semantic_anchors.tsv`, `semantic_overrides.tsv`)
-     vincono sempre, e una riga `forbid` toglie la coppia verbo -> azione.
+     vincono sempre, e una riga `forbid` toglie la coppia verbo -> azione;
+  6. un sinonimo generato passa solo per un senso con cui la parola si usa davvero: il
+     primo, o uno osservato nel corpus (`sense_in_use`). "sell" non e' "betray".
 
 Uso, dalla radice del workspace:
 
@@ -74,11 +76,16 @@ def read_verbs(dict_dir: pathlib.Path):
         if len(fields) >= 2:
             lexnames[int(fields[0])] = fields[1]
     index = {}
+    attested = {}
     for line in open(dict_dir / "index.verb", encoding="latin-1"):
         if not line or line.startswith(" "):
             continue
         fields = line.split()
         index.setdefault(fields[0], fields[5 + int(fields[3]) + 1:])
+        # `tagsense_cnt`: quanti sensi della parola compaiono nel corpus etichettato. I sensi
+        # sono in ordine di frequenza, quindi quelli dal numero `tagsense_cnt` in poi non sono
+        # mai stati osservati nell'uso.
+        attested.setdefault(fields[0], int(fields[5 + int(fields[3])]))
     synsets = {}
     for line in open(dict_dir / "data.verb", encoding="latin-1"):
         if not line or line[0] == " ":
@@ -98,7 +105,26 @@ def read_verbs(dict_dir: pathlib.Path):
     for line in open(dict_dir / "index.adv", encoding="latin-1"):
         if line and not line.startswith(" "):
             adverbs.add(line.split()[0])
-    return index, synsets, adverbs
+    return index, synsets, adverbs, attested
+
+
+def sense_in_use(word: str, offset: str, index: dict, attested: dict) -> bool:
+    """Vero se `offset` e' un senso con cui `word` si usa davvero: il piu' frequente, o uno
+    osservato nel corpus di WordNet.
+
+    Senza questa regola il grafo mappava una parola attraverso un suo senso raro, e quel senso
+    decideva l'azione per tutti gli usi: "sell" arrivava a `betray` (ottavo senso, "tradire"),
+    "fly" a `flee` (undicesimo), "save" a `write` (tracker Analizzatore #110). Misurato il
+    2026-09-23: 72 associazioni su 217 passavano per un senso mai osservato.
+    """
+    senses = index.get(word.lower(), [])
+    if offset not in senses:
+        return False
+    rank = senses.index(offset)
+    # Con meno di due sensi osservati l'ordine di frequenza non dice niente ("glower" ha un solo
+    # senso etichettato): la regola vale solo per le parole il cui uso e' documentato.
+    observed = attested.get(word.lower(), 0)
+    return rank == 0 or observed < 2 or rank < observed
 
 
 def read_rows(path: pathlib.Path):
@@ -135,14 +161,14 @@ def json_list(csv: str) -> str:
     return "[" + ",".join(json_string(v) for v in csv.split(",") if v) + "]"
 
 
-def generate(dict_dir: pathlib.Path, goap_dir: pathlib.Path) -> str:
-    index, synsets, adverbs = read_verbs(dict_dir)
+def generate(dict_dir: pathlib.Path, goap_dir: pathlib.Path, generalize: int = 0) -> str:
+    index, synsets, adverbs, attested = read_verbs(dict_dir)
     actions = {path.stem: path.parent.name for path in goap_dir.rglob("*.tres")}
 
     hand_anchors = read_rows(TOOLS / "semantic_anchors.tsv")
     hand_override_rows = read_rows(TOOLS / "semantic_overrides.tsv")
     policy = {row[1]: row for row in hand_override_rows if row[0] == "generated"}
-    if set(policy) != {"anchor_sense", "other_sense"}:
+    if not {"anchor_sense", "other_sense"} <= set(policy):
         raise SystemExit("semantic_overrides.tsv needs the two 'generated' rows: anchor_sense and other_sense")
     hand_overrides = [row for row in hand_override_rows if row[0] != "generated"]
     hand_anchor_actions = {row[0] for row in hand_anchors}
@@ -168,10 +194,48 @@ def generate(dict_dir: pathlib.Path, goap_dir: pathlib.Path) -> str:
                     continue
                 if surface.replace(" ", "_") in actions:
                     continue
+                if not sense_in_use(word, offset, index, attested):
+                    continue
                 rule = policy["anchor_sense" if offset == anchor_offset else "other_sense"]
                 words = surface.split(" ")
                 particle = words[-1] if len(words) > 1 and words[-1] in adverbs else ""
                 generated.append(["promote", surface, word, particle, offset, action, rule[6], rule[7], rule[8], "", ""])
+
+    # Generalizzazione: un verbo che in WordNet e' un MODO di fare un'azione che abbiamo
+    # ("sprint" e' un modo di "travel", cioe' move_to) vale come quell'azione, con confidenza
+    # piu' bassa perche' la meccanica e' quella generale e il modo lo racconta il narratore.
+    # Serve a coprire la coda lunga dei verbi senza scrivere elenchi: la gerarchia la sa gia'.
+    # Spento per default: senza `--generalize` il file generato resta identico byte per byte.
+    if generalize > 0 and "generalization" in policy:
+        rule = policy["generalization"]
+        for action, anchor_offset, *_ in sorted(anchors, key=lambda row: row[0]):
+            frontier, depth, visited = [anchor_offset], 0, {anchor_offset}
+            while frontier and depth < generalize:
+                depth += 1
+                nxt = []
+                for offset in frontier:
+                    for symbol, target in synsets[offset]["links"]:
+                        if symbol not in ("~", "~i") or target in visited or target not in synsets:
+                            continue
+                        visited.add(target)
+                        nxt.append(target)
+                        for word in synsets[target]["words"]:
+                            surface = word.lower().replace("_", " ")
+                            if "'" in surface or any(c.isdigit() for c in surface):
+                                continue
+                            if surface.replace(" ", "_") in actions or (surface, action) in hand_pairs:
+                                continue
+                            # Solo il senso piu' usato della parola. Senza questo vincolo
+                            # "cut" arrivava a `write` (nel senso di incidere un disco) e
+                            # "fill" a `eat`: la gerarchia collega sensi rari che nessuno
+                            # intende. E' la stessa regola del catalogo oggetti.
+                            senses = index.get(word.lower(), [])
+                            if not senses or senses[0] != target:
+                                continue
+                            words = surface.split(" ")
+                            particle = words[-1] if len(words) > 1 and words[-1] in adverbs else ""
+                            generated.append(["promote", surface, word, particle, target, action, rule[6], rule[7], rule[8], "", ""])
+                frontier = nxt
 
     seen, overrides = set(), list(hand_overrides)
     for row in generated:
@@ -228,8 +292,9 @@ def main() -> None:
     parser.add_argument("--goap", required=True, type=pathlib.Path)
     parser.add_argument("--out", required=True, type=pathlib.Path)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--generalize", type=int, default=0, help="profondita' dei troponimi da mappare sull'azione (0 = spento)")
     args = parser.parse_args()
-    graph = generate(args.dict, args.goap)
+    graph = generate(args.dict, args.goap, args.generalize)
     digest = hashlib.sha256(graph.encode("utf-8")).hexdigest()
     if args.check:
         same = args.out.exists() and args.out.read_text(encoding="utf-8") == graph

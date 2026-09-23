@@ -141,18 +141,8 @@ String unknown_predicate(const Dictionary &linguistic, const String &clause) {
 		const Dictionary roles = unit.get("semantic_roles", Dictionary());
 		lemma = String(roles.get("predicate_lemma", "")).strip_edges().to_lower();
 	}
-	// Con un vocativo in testa l'analizzatore prende il nome per predicato:
-	// "Sasha, whittle the chair" dava `sasha`. Si guarda dopo la virgola.
-	const int comma = clause.find(",");
-	if (comma > 0 && is_only_leading_vocative(clause.left(comma + 1))) {
-		const String vocative = clause.left(comma).strip_edges().to_lower();
-		if (lemma.is_empty() || lemma == vocative) {
-			const String rest = clause.substr(comma + 1).strip_edges().to_lower();
-			const int space = rest.find(" ");
-			const String first = space > 0 ? rest.left(space) : rest;
-			if (!first.is_empty()) return first;
-		}
-	}
+	// Il vocativo in testa ("Sasha, whittle the chair") non e' piu' un caso a parte: il
+	// predicato dell'analizzatore e' il primo verbo, non la prima parola (2026-09-23).
 	return lemma;
 }
 
@@ -163,6 +153,16 @@ String infer_speech_act(const String &clause, const Dictionary &, const Dictiona
 	if (is_non_directive_future(lower, linguistic)) return "statement";
 	if (lower.begins_with("please ") || lower.begins_with("can you ") || lower.begins_with("could you ") || lower.begins_with("would you ") || lower.begins_with("will you ") || lower.begins_with("i need you to ") || lower.begins_with("i want you to ") || lower.begins_with("i would like you to ") || lower.begins_with("i am asking you to ")) return "request";
 	if (predicate_position == 0) return "request";
+	// Il verbo che l'analizzatore ha gia' riconosciuto come predicato della richiesta: in
+	// "carefully carve the wood" sta dopo l'avverbio, e fino al 2026-09-23 il ponte, che
+	// voleva il verbo in posizione 0, ne faceva un'affermazione e il verbo sconosciuto non
+	// veniva dichiarato (tracker Analizzatore #121). Il ponte non e' un secondo parser.
+	{
+		const Array units = linguistic.get("predicate_units", Array());
+		const Dictionary roles = units.size() > 0 && units[0].get_type() == Variant::DICTIONARY ? Dictionary(Dictionary(units[0]).get("semantic_roles", Dictionary())) : Dictionary(linguistic.get("semantic_roles", Dictionary()));
+		const String predicate_surface = String(roles.get("predicate_surface", "")).to_lower();
+		if (predicate_position > 0 && !predicate_surface.is_empty() && find_phrase(lower, predicate_surface) == predicate_position) return "request";
+	}
 	if (predicate_position > 0 && is_only_leading_vocative(lower.left(predicate_position))) return "request";
 	if (predicate_position > 0 && lower.left(predicate_position).contains(" and ")) return "request";
 	return "statement";
@@ -285,9 +285,56 @@ Dictionary SemanticBridge::propose(const String &raw_input, const Dictionary &an
 	bool direct_seen = false;
 	bool candidate_seen = false;
 	bool ambiguous_seen = false;
+	// Il ponte lavora per **predicato**, non per clausola: ogni parte coordinata ("put the sword
+	// in my pocket and fly to the moon") ha il proprio verbo, gia' trovato dall'analizzatore.
+	// Fino al 2026-09-23 si cercava la voce del grafo in tutta la clausola, e poi altre voci
+	// "in piu'" ovunque: un nome come "bar" diventava un verbo, e il secondo verbo senza voce
+	// ("fly") spariva senza essere dichiarato. Ogni parte diventa qui una clausola a se'.
+	Array units_to_link;
 	for (int clause_index = 0; clause_index < clauses.size(); ++clause_index) {
 		if (clauses[clause_index].get_type() != Variant::DICTIONARY) continue;
-		const Dictionary linguistic = clauses[clause_index];
+		const Dictionary clause_linguistic = clauses[clause_index];
+		const Array units = clause_linguistic.get("predicate_units", Array());
+		if (units.size() <= 1) {
+			Dictionary whole = clause_linguistic.duplicate();
+			whole["_clause_index"] = clause_index;
+			units_to_link.append(whole);
+			continue;
+		}
+		const String clause_text = clause_linguistic.get("text", "");
+		const int clause_start = clause_linguistic.get("start_index", 0);
+		const Array clause_tokens = clause_linguistic.get("tokens", Array());
+		const Array clause_lemmas = clause_linguistic.get("lemmas", Array());
+		for (int unit_index = 0; unit_index < units.size(); ++unit_index) {
+			if (units[unit_index].get_type() != Variant::DICTIONARY) continue;
+			const Dictionary unit = units[unit_index];
+			Dictionary part = clause_linguistic.duplicate();
+			const int unit_start = unit.get("start_index", clause_start);
+			const String unit_text = unit.get("text", "");
+			const int token_offset = tokenize(clause_text.left(MAX(0, unit_start - clause_start))).size();
+			const int token_count = tokenize(unit_text).size();
+			Array part_tokens;
+			Array part_lemmas;
+			for (int t = token_offset; t < token_offset + token_count && t < clause_tokens.size(); ++t) {
+				part_tokens.append(clause_tokens[t]);
+				if (t < clause_lemmas.size()) part_lemmas.append(clause_lemmas[t]);
+			}
+			part["text"] = unit_text;
+			part["start_index"] = unit_start;
+			part["end_index"] = unit.get("end_index", unit_start + unit_text.length());
+			part["tokens"] = part_tokens;
+			part["lemmas"] = part_lemmas;
+			part["speech_act"] = unit.get("speech_act", clause_linguistic.get("speech_act", ""));
+			part["semantic_roles"] = unit.get("semantic_roles", Dictionary());
+			part["predicate_units"] = Array::make(unit);
+			part["dependency_refs"] = unit.get("dependency_refs", clause_linguistic.get("dependency_refs", Array()));
+			part["_clause_index"] = clause_index;
+			units_to_link.append(part);
+		}
+	}
+	for (int unit_position = 0; unit_position < units_to_link.size(); ++unit_position) {
+		const Dictionary linguistic = units_to_link[unit_position];
+		const int clause_index = linguistic.get("_clause_index", unit_position);
 		const String clause = String(linguistic.get("text", "")).strip_edges();
 		if (clause.is_empty()) continue;
 		// Direct aliases remain owned by the deterministic compiler, but they do
@@ -297,6 +344,17 @@ Dictionary SemanticBridge::propose(const String &raw_input, const Dictionary &an
 		int best_entry_index = -1;
 		int best_position = -1;
 		int best_surface_length = -1;
+		// Il verbo della clausola come l'ha misurato l'analizzatore, anche di piu' parole
+		// ("get rid of"). Una voce del grafo che ne e' solo la testa ("get") non e' quel verbo.
+		const Array clause_units = linguistic.get("predicate_units", Array());
+		const Dictionary clause_roles = clause_units.size() > 0 && clause_units[0].get_type() == Variant::DICTIONARY ? Dictionary(Dictionary(clause_units[0]).get("semantic_roles", Dictionary())) : Dictionary(linguistic.get("semantic_roles", Dictionary()));
+		const String predicate_surface = String(clause_roles.get("predicate_surface", "")).to_lower();
+		// Il verbo sta dove l'analizzatore l'ha trovato. Una voce del grafo altrove nella frase e'
+		// un'altra parola: in "can u help me load these plates on the bar" `bar` e' il bancone,
+		// non "sbarrare". Senza verbo nella clausola non c'e' niente da proporre (2026-09-23).
+		const int predicate_token = int(clause_roles.get("predicate_token_index", -1));
+		const Array clause_tokens = linguistic.get("tokens", Array());
+		const int predicate_at = predicate_token >= 0 && predicate_token < clause_tokens.size() ? find_phrase(lower, String(clause_tokens[predicate_token])) : -1;
 		for (int entry_index = 0; entry_index < entries.size(); ++entry_index) {
 			if (entries[entry_index].get_type() != Variant::DICTIONARY) continue;
 			const Dictionary entry = entries[entry_index];
@@ -339,6 +397,8 @@ Dictionary SemanticBridge::propose(const String &raw_input, const Dictionary &an
 				}
 			}
 			if (position >= 0 && overlaps_direct_alias(clause, position, surface.length(), capability_snapshot)) continue;
+			if (position >= 0 && predicate_surface.contains(" ") && predicate_surface != surface && predicate_surface.begins_with(surface + String(" "))) continue;
+			if (position >= 0 && position != predicate_at) continue;
 			if (position >= 0 && surface.length() > best_surface_length) {
 				best_entry_index = entry_index;
 				best_position = position;
@@ -406,49 +466,6 @@ Dictionary SemanticBridge::propose(const String &raw_input, const Dictionary &an
 			const double first = Dictionary(candidates[0]).get("confidence", 0.0);
 			const double second = Dictionary(candidates[1]).get("confidence", 0.0);
 			if (first - second < 0.20) ambiguous_seen = true;
-		}
-		// A clause may contain several unrelated predicates. Preserve each
-		// non-overlapping Analyzer span instead of silently granting the longest
-		// lexical graph entry exclusive authority.
-		Array accepted_predicates;
-		accepted_predicates.append(Array::make(best_position, best_position + surface.length()));
-		for (int extra_index = 0; extra_index < entries.size(); ++extra_index) {
-			if (extra_index == best_entry_index || entries[extra_index].get_type() != Variant::DICTIONARY) continue;
-			const Dictionary extra_entry = entries[extra_index];
-			const String extra_surface = extra_entry.get("surface", "");
-			const int extra_position = find_phrase(lower, extra_surface);
-			if (extra_position < 0 || overlaps_direct_alias(clause, extra_position, extra_surface.length(), capability_snapshot)) continue;
-			bool overlaps_accepted = false;
-			for (int span_index = 0; span_index < accepted_predicates.size(); ++span_index) {
-				const Array accepted = accepted_predicates[span_index];
-				if (extra_position < int(accepted[1]) && int(accepted[0]) < extra_position + extra_surface.length()) { overlaps_accepted = true; break; }
-			}
-			if (overlaps_accepted) continue;
-			Array extra_candidates;
-			if (speech_act == "request" && !negated && !quoted && !reported) {
-				const Array raw_extra_candidates = extra_entry.get("candidates", Array());
-				for (int candidate_index = 0; candidate_index < raw_extra_candidates.size(); ++candidate_index) {
-					if (raw_extra_candidates[candidate_index].get_type() != Variant::DICTIONARY) continue;
-					const Dictionary raw_candidate = raw_extra_candidates[candidate_index];
-					const String action = raw_candidate.get("action", "");
-					if (!actions.has(action)) { diagnostics.append(String("SBA_CAPABILITY_FILTERED:") + action); continue; }
-					Dictionary extra_candidate;
-					extra_candidate["action"] = action; extra_candidate["relation"] = raw_candidate.get("relation", "APPROXIMATE_EFFECT"); extra_candidate["confidence"] = raw_candidate.get("confidence", 0.0); extra_candidate["evidence"] = raw_candidate.get("evidence", Array()); extra_candidate["role_compatibility"] = raw_candidate.get("role_compatibility", 1.0); extra_candidate["precondition_delta"] = raw_candidate.get("precondition_delta", Dictionary()); extra_candidate["effect_delta"] = raw_candidate.get("effect_delta", Dictionary());
-					extra_candidates.append(extra_candidate);
-				}
-				sort_candidates(extra_candidates);
-			}
-			const Dictionary extra_unit = predicate_unit_at(linguistic, extra_position);
-			Dictionary extra_roles = extra_unit.get("semantic_roles", linguistic.get("semantic_roles", Dictionary()));
-			if (!extra_roles.has("target_mode")) extra_roles["target_mode"] = extra_entry.get("target_mode", "optional");
-			Dictionary extra_request;
-			const String extra_request_id = String("literal_%03d") % static_cast<int64_t>(literal_requests.size() + 1);
-			extra_request["clause_id"] = linguistic.get("clause_id", String("clause_%03d") % static_cast<int64_t>(clause_index + 1));
-			extra_request["request_id"] = extra_request_id; extra_request["predicate_id"] = extra_unit.get("predicate_id", linguistic.get("clause_id", "")); extra_request["clause_index"] = clause_index; extra_request["source_span"] = source_span_from_analysis(raw_input, linguistic); extra_request["predicate_span"] = source_span(raw_input, lower.substr(extra_position, extra_surface.length()), int(linguistic.get("start_index", 0)) + extra_position); extra_request["surface"] = extra_surface; extra_request["lemma"] = extra_entry.get("lemma", extra_surface); extra_request["particle"] = extra_entry.get("particle", ""); extra_request["speech_act"] = speech_act; extra_request["negated"] = negated; extra_request["quoted"] = is_quoted(clause, extra_position); extra_request["reported"] = reported; extra_request["semantic_roles"] = extra_roles; extra_request["dependency_refs"] = extra_unit.get("dependency_refs", linguistic.get("dependency_refs", Array())); extra_request["candidates"] = extra_candidates;
-			literal_requests.append(extra_request);
-			accepted_predicates.append(Array::make(extra_position, extra_position + extra_surface.length()));
-			if (!extra_candidates.is_empty()) candidate_seen = true;
-			if (extra_candidates.size() > 1 && double(Dictionary(extra_candidates[0]).get("confidence", 0.0)) - double(Dictionary(extra_candidates[1]).get("confidence", 0.0)) < 0.20) ambiguous_seen = true;
 		}
 	}
 

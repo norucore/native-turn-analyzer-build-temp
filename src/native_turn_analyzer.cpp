@@ -104,13 +104,20 @@ int last_structural_boundary(const String &prefix) {
 
 // Segnali del discorso in testa o in coda al prefisso locale: "ok now open the
 // door" e' un imperativo quanto "open the door" (tracker #33). Classe chiusa.
+// "and pass it to me after?", "maybe you can open the window", "actually, grab the mug": congiunzioni,
+// avverbi di attenuazione e interiezioni in testa non tolgono l'imperativo (corpus esterno del
+// 2026-09-15). Classe chiusa, e l'unica: fino al 2026-09-23 un secondo elenco in GDScript
+// (`NOT_A_VERB`) toglieva le stesse parole dai verbi sconosciuti, perche' qui il predicato era la
+// prima parola. "okay", "well", "please" sono anche verbi per WordNet: per questo servono qui.
+bool is_discourse_marker(const String &word) {
+	static const Array markers = Array::make("ok", "okay", "now", "so", "alright", "well", "hey", "then", "right", "next", "first", "also", "afterwards", "finally", "later", "and", "but", "or", "oh", "um", "uh", "yeah", "maybe", "actually", "just", "please", "thanks", "sorry", "hi", "hello", "yes", "wow", "hmm");
+	return markers.has(word.trim_suffix(","));
+}
+
 String without_discourse_markers(const String &prefix) {
 	PackedStringArray words = prefix.strip_edges().trim_suffix(",").split(" ", false);
-	// "and pass it to me after?", "maybe you can open the window", "actually, grab the mug": congiunzioni e
-	// avverbi di attenuazione in testa non tolgono l'imperativo (corpus esterno del 2026-09-15). Classe chiusa.
-	const Array markers = Array::make("ok", "okay", "now", "so", "alright", "well", "hey", "then", "right", "next", "first", "also", "afterwards", "finally", "later", "and", "but", "or", "oh", "um", "uh", "yeah", "maybe", "actually", "just");
-	while (!words.is_empty() && markers.has(String(words[0]).trim_suffix(","))) words.remove_at(0);
-	while (!words.is_empty() && markers.has(String(words[words.size() - 1]).trim_suffix(","))) words.remove_at(words.size() - 1);
+	while (!words.is_empty() && is_discourse_marker(String(words[0]))) words.remove_at(0);
+	while (!words.is_empty() && is_discourse_marker(String(words[words.size() - 1]))) words.remove_at(words.size() - 1);
 	return String(" ").join(words);
 }
 
@@ -203,7 +210,7 @@ String trim_target_span(String target) {
 		// "pass me the envelope" e' il destinatario e in "hug me" e' il bersaglio, e la
 		// differenza e' posizionale, non lessicale. Se ne occupa
 		// `extract_give_recipient`, che quel ruolo lo sa gia' leggere.
-		for (const char *prefix : {"the ", "a ", "an ", "your ", "my ", "to ", "on ", "at ", "in ", "from ",
+		for (const char *prefix : {"the ", "a ", "an ", "your ", "my ", "to ", "on ", "at ", "in ", "from ", "of ",
 			"back ", "up ", "down ", "out ", "off ", "over "}) {
 			if (target.begins_with(prefix)) {
 				target = target.trim_prefix(prefix).strip_edges();
@@ -366,6 +373,37 @@ bool has_inverted_modal_request(const Array &tokens) {
 	return inverted_modal_predicate_start(tokens, false) >= 0;
 }
 
+// Modale rivolto all'interlocutore, in tutti e due gli ordini e in qualunque punto:
+// "can you open it", "I think you should open it". Fino al 2026-09-23 la forma
+// soggetto-modale stava in due elenchi diversi, e quello che sceglie il verbo non
+// conteneva "you should": in "I think you should open the door" vinceva `think`
+// (tracker Analizzatore #93). Una regola sola, la stessa adiacenza.
+bool has_addressed_modal(const Array &tokens) {
+	for (int i = 0; i + 1 < tokens.size(); ++i) {
+		const String first = tokens[i];
+		const String second = tokens[i + 1];
+		if ((is_modal_word(first) && is_second_person_word(second)) || (is_second_person_word(first) && is_modal_word(second))) return true;
+	}
+	return false;
+}
+
+// Una negazione e' "not", "never" o una contrazione in n't. La contrazione davanti al
+// pronome della seconda persona non nega: "couldn't you open it" e "why don't you sit"
+// chiedono (stessa adiacenza di `inverted_modal_predicate_start`). Fino al 2026-09-23 la
+// clausola era negata solo con "not", "never" o "don't" in testa: "I didn't take the pen"
+// usciva affermativa (tracker Analizzatore #102), e con lei ogni wouldn't, couldn't, won't.
+bool negates_at(const Array &tokens, int index) {
+	const String token = tokens[index];
+	if (token == "not" || token == "never") return true;
+	if (!token.ends_with("n't")) return false;
+	return !(index + 1 < tokens.size() && is_second_person_word(String(tokens[index + 1])));
+}
+
+bool clause_is_negated(const Array &tokens) {
+	for (int i = 0; i < tokens.size(); ++i) if (negates_at(tokens, i)) return true;
+	return false;
+}
+
 Dictionary empty_roles() {
 	Dictionary roles;
 	const char *keys[] = {"action", "object", "destination", "recipient_or_direction", "object_or_class", "query_kind", "event_kind", "hazard", "source", "imminence", "severity"};
@@ -524,6 +562,36 @@ void NativeTurnAnalyzer::absorb_irregular_forms(const Dictionary &capability_sna
 	if (!verbs.is_empty()) supplied_verb_lemmas = verbs;
 }
 
+// Vero se la parola e' una forma di un verbo inglese per WordNet (`verb_lemmas`).
+bool NativeTurnAnalyzer::is_verb_token(const String &token) const {
+	if (supplied_verb_lemmas.is_empty()) return false;
+	const String reduced = lemma(token);
+	// La "e" tolta dal taglio di -ing/-ed ("taking" -> "tak") si rimette solo su una forma
+	// flessa: su una parola intera trasformava "we", "not", "to" in "wee", "note", "toe".
+	return supplied_verb_lemmas.has(token) || supplied_verb_lemmas.has(reduced) || (reduced != token && supplied_verb_lemmas.has(reduced + String("e")));
+}
+
+// Quante parole, da `start`, formano un solo verbo per WordNet: "get rid of" e' 3, "take
+// place" 2, "take" 1. WordNet registra 2.829 verbi di piu' parole (`get_rid_of`,
+// `take_apart`, `hold_the_line`) e sono verbi a se': il loro senso non e' quello della testa.
+// Senza questa misura la testa vinceva e si eseguiva il suo senso: "get rid of the box"
+// raccoglieva la scatola (tracker Analizzatore #126), "take place" diventava pickup (#110).
+int NativeTurnAnalyzer::verb_unit_length(const Array &tokens, int start) const {
+	if (start < 0 || start >= tokens.size() || supplied_verb_lemmas.is_empty()) return 1;
+	const String head = lemma(tokens[start]);
+	String joined = supplied_verb_lemmas.has(head) ? head : String(tokens[start]);
+	int best = 1;
+	// Verbo + preposizione o particella ("go to", "carry out") e' composizionale oppure e' una
+	// locuzione a particella, di cui si occupa gia' `phrasal_verbs.json`: qui contano le unita'
+	// il cui secondo pezzo e' una parola piena ("get rid of", "take place", "hold the line").
+	if (start + 1 < tokens.size() && string_array({"to", "at", "in", "on", "into", "onto", "out", "up", "down", "off", "over", "away", "back", "for", "with", "from", "by", "about", "around", "through", "along", "across", "after", "apart"}).has(tokens[start + 1])) return 1;
+	for (int n = 2; n <= 4 && start + n <= tokens.size(); ++n) {
+		joined += String("_") + String(tokens[start + n - 1]);
+		if (supplied_verb_lemmas.has(joined)) best = n;
+	}
+	return best;
+}
+
 int NativeTurnAnalyzer::find_lemma_phrase_start(const String &text, const String &phrase) const {
 	const Array surface_tokens = tokenize(text);
 	const Array phrase_tokens = tokenize(phrase);
@@ -628,10 +696,29 @@ Array NativeTurnAnalyzer::split_clauses(const String &input) const {
 String NativeTurnAnalyzer::infer_clause_speech_act(const String &text, const Array &tokens, const Array &lemmas) const {
 	const String lower = text.to_lower().strip_edges();
 	if (tokens.is_empty()) return "fragment";
+	// "*Love unites beings*": il testo fra asterischi e' un'azione o una descrizione di
+	// roleplay, racconto e non ordine, come gia' in `build_frame` (`quoted_or_roleplay`).
+	if (lower.begins_with("*")) return "statement";
 	// Stessa regola grammaticale del resto del file, non un quarto elenco:
 	// `clause_initial_only` perche' qui conta solo la coppia in testa alla frase.
 	const bool modal_request = inverted_modal_predicate_start(tokens, true) >= 0;
-	if (lower.ends_with("?") && !modal_request) return "question";
+	// "help me get the cooler in here?": dopo un imperativo il punto interrogativo non fa una
+	// domanda, come gia' in `build_frame` (tracker #28). Imperativo = comincia con un verbo che
+	// non e' un ausiliare o un modale.
+	bool verb_initial = false;
+	{
+		int head = 0;
+		while (head < tokens.size() && is_discourse_marker(tokens[head])) ++head;
+		if (head < tokens.size()) {
+			const String first_word = tokens[head];
+			const String base = lemma(first_word);
+			verb_initial = is_verb_token(first_word) && first_word == base && !is_modal_word(first_word) && base != "be" && base != "do" && base != "have";
+		}
+	}
+	if (lower.ends_with("?") && !modal_request && !verb_initial) return "question";
+	// Ausiliare seguito dal soggetto: "do u ever get bored", "are you ok", "have you seen it".
+	// E' la domanda anche senza punto interrogativo, come in `build_frame`.
+	if (tokens.size() >= 2 && string_array({"do", "does", "did", "is", "are", "was", "were", "have", "has", "had"}).has(tokens[0]) && string_array({"i", "you", "u", "he", "she", "it", "we", "they"}).has(tokens[1])) return "question";
 	if (modal_request || starts_any(lower, string_array({"please ", "i need you to ", "i want you to ", "i would like you to ", "i'd like you to ", "i am asking you to ", "go ahead and "}))) return "request";
 	// Un intercalare seguito dalla virgola ("oh,", "wait,", "Sasha,") e una congiunzione in
 	// testa non sono il soggetto ne' il verbo: "oh, and I left a tin box on the desk" e
@@ -643,6 +730,8 @@ String NativeTurnAnalyzer::infer_clause_speech_act(const String &text, const Arr
 		const String token = tokens[head];
 		if (rest.begins_with(token + String(",")) ) rest = rest.substr(token.length() + 1).strip_edges();
 		else if (string_array({"and", "but", "so", "or"}).has(token) && rest.begins_with(token + String(" "))) rest = rest.substr(token.length()).strip_edges();
+		// "sorry i get so focused", "ok so what now": l'interiezione in testa non e' il verbo.
+		else if (is_discourse_marker(token) && rest.begins_with(token + String(" "))) rest = rest.substr(token.length()).strip_edges();
 		else break;
 		++head;
 	}
@@ -650,6 +739,7 @@ String NativeTurnAnalyzer::infer_clause_speech_act(const String &text, const Arr
 	const String first_lemma = head < lemmas.size() ? String(lemmas[head]) : first;
 	const Array declarative_starters = string_array({
 		"i", "you", "he", "she", "it", "we", "they", "someone", "people", "the", "this", "that", "there",
+		"these", "those", "a", "an", "my", "your", "his", "her", "our", "their",
 		"yesterday", "tomorrow", "later", "eventually", "someday", "soon", "tonight", "next", "maybe", "perhaps", "probably"
 	});
 	// Un soggetto contratto e' pur sempre un soggetto. `tokenize()` non sostituisce
@@ -666,6 +756,27 @@ String NativeTurnAnalyzer::infer_clause_speech_act(const String &text, const Arr
 	// la `s` finale e il confronto falliva per un motivo diverso da questo.
 	const int contraction = first.find("'");
 	const String first_head = contraction > 0 ? first.left(contraction) : first;
+	// "what if we offered delivery", "where is the torch": la parola wh apre una domanda o una
+	// proposta, non un ordine. Classe chiusa.
+	if (string_array({"what", "who", "whom", "whose", "which", "where", "when", "why", "how"}).has(first_head)) return "question";
+	// Una parola che non e' un verbo non apre un imperativo ("ahhh this feels so good"). Fa
+	// eccezione la parola sconosciuta seguita dal suo oggetto e da nessun altro verbo
+	// ("flurbulate the lamp"): li' e' un verbo che il dizionario non ha.
+	if (!supplied_verb_lemmas.is_empty() && !is_verb_token(first)) {
+		const Array object_starters = string_array({"the", "a", "an", "my", "your", "his", "her", "its", "our", "their", "this", "that", "these", "those", "some", "it", "them", "me", "us", "him"});
+		bool later_verb = false;
+		for (int k = head + 2; k < tokens.size() && !later_verb; ++k) later_verb = is_verb_token(tokens[k]) && !object_starters.has(tokens[k - 1]);
+		const bool unknown_imperative = head + 1 < tokens.size() && object_starters.has(tokens[head + 1]) && !later_verb && !declarative_starters.has(first_head);
+		// "carefully carve the wood", "slowly open the door": l'avverbio di modo davanti a un
+		// verbo in forma base, che non e' un ausiliare.
+		bool adverb_before_imperative = false;
+		if (head + 1 < tokens.size() && !declarative_starters.has(first_head) && contraction < 0) {
+			const String second = tokens[head + 1];
+			const String second_base = lemma(second);
+			adverb_before_imperative = is_verb_token(second) && second == second_base && !is_modal_word(second) && second_base != "be" && second_base != "do" && second_base != "have";
+		}
+		return unknown_imperative || adverb_before_imperative ? "request" : "statement";
+	}
 	// Bare imperatives use the Analyzer's base-form morphology at clause start.
 	// Inflected/past forms and explicit declarative starters remain statements.
 	if (!declarative_starters.has(first_head) && first == first_lemma) return "request";
@@ -689,10 +800,59 @@ Dictionary NativeTurnAnalyzer::extract_clause_roles(const String &text, const Ar
 		for (int index = 0; index < tokens.size(); ++index) if (String(tokens[index]) == "to") predicate_index = index + 1;
 	} else if (lower.begins_with("go ahead and ")) predicate_index = 3;
 	if (predicate_index >= tokens.size()) return roles;
-	roles["predicate_lemma"] = predicate_index < lemmas.size() ? lemmas[predicate_index] : tokens[predicate_index];
+	// Il predicato e' il primo **verbo** da quel punto, non la prima parola. Fino al
+	// 2026-09-23 era la prima parola: "carefully carve the wood" dava per verbo
+	// `carefully` (tracker Analizzatore #121), e ogni frase dichiarativa dava il soggetto
+	// ("i'm", "ok", "so": #14). Un ausiliare seguito subito dal suo verbo non e' il
+	// predicato ("did you take", "didn't take"); una parola dopo un determinante e' un nome
+	// ("the cook"). Senza nessun verbo non c'e' predicato da dichiarare.
+	int unit_length = 1;
+	if (!supplied_verb_lemmas.is_empty()) {
+		const Array determiners = string_array({"the", "a", "an", "my", "your", "his", "her", "its", "our", "their", "this", "that", "these", "those", "some", "any", "every", "each"});
+		const Array subject_pronouns = string_array({"i", "you", "u", "he", "she", "it", "we", "they", "not", "never"});
+		int found = -1;
+		for (int index = predicate_index; index < tokens.size() && found < 0; ++index) {
+			const String token = tokens[index];
+			if (index > 0 && determiners.has(tokens[index - 1])) continue;
+			if (is_discourse_marker(token) || !is_verb_token(token)) continue;
+			const String base = lemma(token);
+			const bool auxiliary = is_modal_word(token) || token.ends_with("n't") || base == "be" || base == "do" || base == "have";
+			if (auxiliary) {
+				// Il verbo retto dall'ausiliare arriva entro tre parole, dopo soggetto e avverbi
+				// ("do u ever get", "did you really take"); un determinante chiude la ricerca:
+				// in "have a bite" l'ausiliare e' il verbo.
+				int next = index + 1;
+				while (next < tokens.size() && next <= index + 3 && !is_verb_token(tokens[next]) && !determiners.has(tokens[next])) ++next;
+				if (next < tokens.size() && next <= index + 3 && is_verb_token(tokens[next]) && !determiners.has(tokens[next])) continue;
+			}
+			found = index;
+		}
+		// Nessun verbo del dizionario, ma la frase e' un ordine: la parola in posizione di
+		// imperativo e' un verbo che WordNet non conosce ("flurbulate the lamp") e va dichiarata,
+		// purche' non sia una parola di classe chiusa (pronome, determinante, parola wh).
+		if (found < 0 && speech_act == "request") {
+			int head = predicate_index;
+			while (head < tokens.size() && is_discourse_marker(tokens[head])) ++head;
+			const bool closed_class = head >= tokens.size() || determiners.has(tokens[head]) || subject_pronouns.has(tokens[head]) || string_array({"what", "who", "whom", "whose", "which", "where", "when", "why", "how", "there", "here", "let's"}).has(tokens[head]) || String(tokens[head]).find("'") > 0;
+			// Serve un complemento che cominci come un gruppo nominale: "flurbulate the lamp" si,
+			// "whatever." e "goodnight Sasha" no.
+			const bool object_follows = head + 1 < tokens.size() && (determiners.has(tokens[head + 1]) || string_array({"it", "them", "me", "us", "him", "her"}).has(tokens[head + 1]));
+			if (!closed_class && object_follows) found = head;
+		}
+		if (found < 0) return roles;
+		predicate_index = found;
+		// "help me load the plates": chi chiede aiuto chiede il verbo che segue, all'infinito
+		// senza "to". E' la costruzione di "help", non un elenco di verbi.
+		if (lemma(tokens[predicate_index]) == "help" && predicate_index + 2 < tokens.size() && string_array({"me", "us"}).has(tokens[predicate_index + 1]) && is_verb_token(tokens[predicate_index + 2])) predicate_index += 2;
+		unit_length = verb_unit_length(tokens, predicate_index);
+	}
+	String predicate_surface = tokens[predicate_index];
+	for (int index = predicate_index + 1; index < predicate_index + unit_length; ++index) predicate_surface += String(" ") + String(tokens[index]);
+	roles["predicate_lemma"] = unit_length > 1 ? predicate_surface : String(predicate_index < lemmas.size() ? lemmas[predicate_index] : tokens[predicate_index]);
+	roles["predicate_surface"] = predicate_surface;
 	roles["predicate_token_index"] = predicate_index;
 	String payload;
-	for (int index = predicate_index + 1; index < tokens.size(); ++index) payload += (payload.is_empty() ? "" : " ") + String(tokens[index]);
+	for (int index = predicate_index + unit_length; index < tokens.size(); ++index) payload += (payload.is_empty() ? "" : " ") + String(tokens[index]);
 	// Il destinatario si legge **prima** del taglio, non dopo. Dal 2026-09-04
 	// `trim_target_span` si ferma anche su `" to "`, quindi tagliando per primo il
 	// `find(" to ")` qui sotto non trova piu' niente e "give the book to me" perde il
@@ -1086,12 +1246,13 @@ Dictionary NativeTurnAnalyzer::analyze_turn(const String &raw_input, const Dicti
 			const Array unit_tokens = tokenize(unit_text);
 			Array unit_lemmas;
 			for (int unit_token_index = 0; unit_token_index < unit_tokens.size(); ++unit_token_index) unit_lemmas.append(lemma(unit_tokens[unit_token_index]));
-			const String unit_speech_act = unit_index > 0 && speech_act == "request" ? String("request") : infer_clause_speech_act(unit_text, unit_tokens, unit_lemmas);
+			// Il roleplay fra asterischi vale per tutta la clausola, anche per la parte dopo "and".
+			const String unit_speech_act = text.strip_edges().begins_with("*") ? String("statement") : unit_index > 0 && speech_act == "request" ? String("request") : infer_clause_speech_act(unit_text, unit_tokens, unit_lemmas);
 			Array unit_dependencies = unit_index == 0 ? dependency_refs.duplicate() : Array::make(String("%s_predicate_%03d") % Array::make(clause_id, unit_index));
 			Dictionary unit; unit["predicate_id"] = String("%s_predicate_%03d") % Array::make(clause_id, unit_index + 1); unit["text"] = unit_text; unit["start_index"] = start + unit_relative_start; unit["end_index"] = start + unit_relative_start + unit_text.length(); unit["speech_act"] = unit_speech_act; unit["semantic_roles"] = extract_clause_roles(unit_text, unit_tokens, unit_lemmas, unit_speech_act); unit["dependency_refs"] = unit_dependencies; predicate_units.append(unit);
 		}
 		clause["speech_act"] = speech_act; clause["semantic_roles"] = semantic_roles; clause["dependency_refs"] = dependency_refs; clause["predicate_units"] = predicate_units; clause_items.append(clause);
-		Dictionary lc; lc["clause_id"] = clause_id; lc["segment_id"] = "segment_1"; lc["text"] = text; lc["start_index"] = start; lc["end_index"] = start + text.length(); lc["tokens"] = tokens; lc["lemmas"] = lemmas; lc["speech_act"] = speech_act; lc["semantic_roles"] = semantic_roles; lc["dependency_refs"] = dependency_refs; lc["predicate_units"] = predicate_units; lc["question"] = speech_act == "question"; lc["negated"] = tokens.has("not") || tokens.has("never") || text.to_lower().begins_with("don't "); lc["conditional"] = tokens.has("if") || tokens.has("would"); lc["condition_kind"] = condition_kind(tokens); lc["modal"] = modal; lc["references"] = references; linguistic.append(lc);
+		Dictionary lc; lc["clause_id"] = clause_id; lc["segment_id"] = "segment_1"; lc["text"] = text; lc["start_index"] = start; lc["end_index"] = start + text.length(); lc["tokens"] = tokens; lc["lemmas"] = lemmas; lc["speech_act"] = speech_act; lc["semantic_roles"] = semantic_roles; lc["dependency_refs"] = dependency_refs; lc["predicate_units"] = predicate_units; lc["question"] = speech_act == "question"; lc["negated"] = clause_is_negated(tokens); lc["conditional"] = tokens.has("if") || tokens.has("would"); lc["condition_kind"] = condition_kind(tokens); lc["modal"] = modal; lc["references"] = references; linguistic.append(lc);
 	}
 	String segment_surface = "statement";
 	for (int i = 0; i < linguistic.size(); ++i) {
@@ -1116,7 +1277,15 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	Dictionary roles = empty_roles();
 	const bool indirect_query = lower.contains("need to know whether ") || lower.contains("tell me whether ") || lower.contains("want to know whether ") || lower.contains("wonder whether ");
 	const bool wh_prefix = starts_any(lower, string_array({"what ", "where ", "when ", "why ", "who ", "how "}));
-	const bool auxiliary_question = starts_any(lower, string_array({"do ", "does ", "did ", "are ", "is ", "have ", "has "}));
+	// "do" e "have" sono anche verbi pieni: "have a bite of the apple" e "do the dishes"
+	// ordinano. Aprono una domanda solo col soggetto subito dopo o col punto interrogativo
+	// ("have you seen it", "do they know?"). Fino al 2026-09-23 "have a bite" diventava una
+	// domanda sullo stato e non arrivava a `eat` (tracker Analizzatore #66).
+	bool auxiliary_question = starts_any(lower, string_array({"does ", "did ", "are ", "is ", "has "}));
+	if (!auxiliary_question && starts_any(lower, string_array({"do ", "have "}))) {
+		const Array head_tokens = tokenize(lower);
+		auxiliary_question = lower.ends_with("?") || (head_tokens.size() >= 2 && string_array({"i", "you", "u", "he", "she", "it", "we", "they"}).has(head_tokens[1]));
+	}
 	// A leading subordinate "when ...," is not an interrogative. Treating it
 	// as one turns commands such as "When ready, close ..." into state queries.
 	// "come sit here with me?" resta un ordine: il punto interrogativo dopo un
@@ -1146,7 +1315,16 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	}
 	bool question = (lower.ends_with("?") && !imperative_shape) || indirect_query || auxiliary_question || (wh_prefix && !lower.contains(","));
 	const bool indirect_request = lower.contains("i need you to ") || lower.contains("i would like you to ") || lower.contains("i'd like you to ") || lower.contains("i want you to ") || lower.contains("i am asking you to ") || lower.contains("go ahead and ") || lower.contains("new instruction") || lower.contains("fresh request") || lower.contains("replacing it with this");
-	const bool prohibited = starts_any(lower, string_array({"do not ", "don't ", "never ", "stop ", "avoid "}));
+	bool prohibited = starts_any(lower, string_array({"do not ", "don't ", "never ", "stop ", "avoid "}));
+	// "stop hiding" e' un alias di `reveal_self`: se l'autore ha dichiarato la frase intera
+	// come azione, la parola che nega fa parte del verbo e non lo vieta (tracker #66).
+	if (prohibited) {
+		const Array prohibition_aliases = Dictionary(registry.get("alias_index", Dictionary())).keys();
+		for (int alias_index = 0; alias_index < prohibition_aliases.size() && prohibited; ++alias_index) {
+			const String alias = prohibition_aliases[alias_index];
+			if (alias.contains(" ") && (lower == alias || lower.begins_with(alias + String(" ")))) prohibited = false;
+		}
+	}
 	const bool reported = lower.contains(" told you to ") || lower.contains("the word ") || lower.contains("what does ") || lower.contains("said \"") || lower.contains("said '");
 	if (prohibited || reported) { frame["frame_type"] = "conversation"; frame["speech_act"] = question ? "question" : "statement"; frame["surface_kind"] = frame["speech_act"]; frame["semantic_roles"] = roles; return frame; }
 	if (lower.contains("on your head") || lower.contains("what are you wearing") || lower.contains("your equipment")) { frame["frame_type"] = "inventory_query"; frame["speech_act"] = "question"; frame["surface_kind"] = "question"; roles["query_kind"] = "equipment"; roles["object"] = lower.contains("cap") ? "cap" : "equipment"; roles["object_or_class"] = roles["object"]; frame["semantic_roles"] = roles; return frame; }
@@ -1349,20 +1527,26 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 			const Array before_alias = tokenize(lower.left(alias_start));
 			if (!before_alias.is_empty() && string_array({"the", "a", "an", "my", "your", "his", "their", "our", "these", "those", "some"}).has(before_alias[before_alias.size() - 1])) continue;
 		}
+		// La testa di un verbo di piu' parole non e' quel verbo: in "get rid of the box" e
+		// "take place" l'alias `get`/`take` non vale se WordNet conosce l'unita' piu' lunga e
+		// nessuna azione la dichiara (tracker Analizzatore #110, #126).
+		if (!narration && !gerund && particle_at < 0) {
+			const Array clause_tokens = tokenize(lower);
+			const int alias_token = tokenize(lower.left(alias_start)).size();
+			const int alias_length = tokenize(alias).size();
+			const int unit_length = verb_unit_length(clause_tokens, alias_token);
+			if (unit_length > alias_length) {
+				String unit = clause_tokens[alias_token];
+				for (int u = alias_token + 1; u < alias_token + unit_length; ++u) unit += String(" ") + String(clause_tokens[u]);
+				if (!aliases.has(unit)) continue;
+			}
+		}
 		const String alias_prefix = lower.left(alias_start);
 		int alias_score = 0;
 		// Il bonus vale per **entrambi** gli ordini: la forma invertita per
 		// grammatica, quella soggetto-modale ancora per elenco. Qui serve solo a
 		// dire quale verbo e' quello comandato, non se la frase e' una richiesta.
-		bool modal_context = has_inverted_modal_request(tokenize(alias_prefix));
-		if (!modal_context) {
-			for (const char *construction : {"you can", "you could", "you would", "you will", "you may"}) {
-				if (find_word(alias_prefix, construction) >= 0) {
-					modal_context = true;
-					break;
-				}
-			}
-		}
+		const bool modal_context = has_addressed_modal(tokenize(alias_prefix));
 		if (modal_context) alias_score += 10000;
 		if (find_word(alias_prefix, "please") >= 0) alias_score += 1000;
 		const String alias_local_prefix = without_discourse_markers(local_prefix_before(alias_prefix));
@@ -1396,10 +1580,25 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	}
 	// Inflected action mentions are allowed to identify the subject of a
 	// question, but never become executable through this fallback.
-	if (best.is_empty() && question) {
+	// Fuori dalle domande la forma flessa nomina l'azione ma non la ordina: "took the machine
+	// apart" racconta. Fino al 2026-09-23 non produceva nessun frame e finiva in racconto libero
+	// senza che nessuno sapesse di quale azione si parlava (tracker Analizzatore #125).
+	// Solo sul verbo della frase: in "carefully carve the wood using tools" il participio
+	// "using" non e' l'azione di cui si parla.
+	const bool inflected_mention = best.is_empty() && !question;
+	int clause_verb_at = -1;
+	if (inflected_mention) {
+		const Array clause_tokens = tokenize(lower);
+		for (int t = 0; t < clause_tokens.size() && clause_verb_at < 0; ++t) {
+			if (t > 0 && string_array({"the", "a", "an", "my", "your", "his", "her", "its", "our", "their", "this", "that"}).has(clause_tokens[t - 1])) continue;
+			if (is_verb_token(clause_tokens[t])) clause_verb_at = find_word(lower, clause_tokens[t]);
+		}
+	}
+	if (best.is_empty()) {
 		for (int i = 0; i < alias_keys.size(); ++i) {
 			String alias = alias_keys[i];
 			const int lemma_start = find_lemma_phrase_start(lower, alias);
+			if (inflected_mention && lemma_start != clause_verb_at) continue;
 			if (lemma_start >= 0 && alias.length() > best.length()) {
 				best = alias;
 				best_start = lemma_start;
@@ -1416,6 +1615,7 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	}
 	if (candidates.size() != 1) { frame["frame_type"] = "clarification"; frame["speech_act"] = "request"; frame["surface_kind"] = "request"; frame["candidate_actions"] = candidates; frame["semantic_roles"] = roles; return frame; }
 	String action = candidates[0]; Dictionary contract = actions.get(action, Dictionary());
+	if (inflected_mention) { frame["frame_type"] = "conversation"; frame["speech_act"] = "statement"; frame["surface_kind"] = "statement"; roles["query_kind"] = "action_mention"; roles["action"] = action; frame["semantic_roles"] = roles; Array evidence = frame["parser_evidence"]; evidence.append("non_request:inflected_mention"); frame["parser_evidence"] = evidence; return frame; }
 	const String target_mode = contract.get("target_mode", "optional");
 	const int matched_action_end = best_start >= 0 ? end_after_word_tokens(lower, best_start, tokenize(best).size() - (best_particle_at >= 0 ? 1 : 0)) : -1;
 	const String action_prefix = best_start >= 0 ? lower.left(best_start).strip_edges() : lower;
@@ -1447,7 +1647,7 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	const Array prefix_tokens = tokenize(action_prefix);
 	const int negation_window_start = prefix_tokens.size() > 4 ? prefix_tokens.size() - 4 : 0;
 	for (int i = negation_window_start; i < prefix_tokens.size(); ++i) {
-		if (!why_not_request && string_array({"not", "never", "dont", "don't", "avoid", "stop"}).has(prefix_tokens[i])) {
+		if (!why_not_request && (negates_at(prefix_tokens, i) || string_array({"dont", "avoid", "stop"}).has(prefix_tokens[i]))) {
 			locally_negated = true;
 			break;
 		}
@@ -1750,6 +1950,18 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	const bool broken_target_span = !has_word_character(target) || target_last == U'—' || target_last == U'-';
 	const bool missing_required_target = target_mode == "required" && (target.is_empty() || string_array({"it", "this", "that", "them", "those", "these", "him", "her", "there", "the other", "other"}).has(target) || target.contains("...") || broken_target_span || string_array({"to", "on", "at", "in", "from", "through", "behind", "beside", "against", "over"}).has(target));
 	if (missing_required_target) { frame["frame_type"] = "clarification"; frame["speech_act"] = "request"; frame["surface_kind"] = "request"; Array action_candidates; action_candidates.append(action); frame["candidate_actions"] = action_candidates; roles["action"] = action; roles["target_mode"] = target_mode; frame["semantic_roles"] = roles; Array evidence = frame["parser_evidence"]; evidence.append("missing_required_role:object"); if (starts_any(lower, string_array({"if ", "unless "})) || lower.contains(" only if ") || lower.contains(" when ")) evidence.append("constraint:unverified_condition"); frame["parser_evidence"] = evidence; return frame; }
+	// "break a leg", "take a picture of it": l'articolo indeterminato nomina un tipo di cosa,
+	// non una cosa gia' presente. Chi riceve il frame non deve chiedere "dov'e'?" come per
+	// "the cup" (tracker Analizzatore #107). L'articolo lo toglie `trim_target_span`, quindi si
+	// legge qui dal complemento grezzo; il pronome del destinatario ("give me a pen") si salta.
+	{
+		const Array payload_tokens = tokenize(action_payload);
+		int first = 0;
+		while (first < payload_tokens.size() && string_array({"me", "us", "him", "her", "them"}).has(payload_tokens[first]) && first + 1 < payload_tokens.size()) ++first;
+		if (first < payload_tokens.size() && string_array({"a", "an", "some", "any", "another"}).has(payload_tokens[first])) {
+			Array evidence = frame["parser_evidence"]; evidence.append("target_reference:indefinite"); frame["parser_evidence"] = evidence;
+		}
+	}
 	frame["frame_type"] = string_array({"equip", "unequip", "pickup", "drop", "give", "take_from"}).has(action) ? "inventory_action" : "world_action"; frame["speech_act"] = "request"; frame["surface_kind"] = "request"; roles["action"] = action; roles["object"] = target; roles["object_or_class"] = target; roles["destination"] = location.is_empty() ? target : location; roles["recipient_or_direction"] = recipient; roles["target_mode"] = target_mode; frame["semantic_roles"] = roles; if (!target.is_empty()) { Array targets; targets.append(target); frame["candidate_targets"] = targets; } return frame;
 }
 
@@ -1818,12 +2030,15 @@ Dictionary NativeTurnAnalyzer::compile_turn(const String &raw_input, const Dicti
 			const Dictionary aliases = capability_snapshot.get("alias_index", Dictionary());
 			const Array alias_keys = aliases.keys();
 			int clause_search_from = 0;
+			int previous_clause_end = -1;
 			for (int i = 0; i < clauses.size(); ++i) {
 				const String clause = clauses[i];
 				const int clause_start = find_clause_start(normalized_input, clause, clause_search_from);
 				const int safe_clause_start = clause_start >= 0 ? clause_start : 0;
 				const int clause_end = clause_start >= 0 ? clause_start + clause.length() : normalized_input.length();
 				if (clause_start >= 0) clause_search_from = clause_end;
+				const int separator_start = previous_clause_end;
+				previous_clause_end = clause_end;
 				const Array clause_tokens = tokenize(clause);
 				if (is_retraction(clause)) {
 					for (int frame_index = 0; frame_index < frames.size(); ++frame_index) {
@@ -1928,7 +2143,36 @@ Dictionary NativeTurnAnalyzer::compile_turn(const String &raw_input, const Dicti
 					continue;
 				}
 				Dictionary frame = build_frame(frames.size() + 1, clause, capability_snapshot, frames);
-				frame["source_spans"] = source_span_array(normalized_input, safe_clause_start, clause_end);
+				// Il frame copre la propria parte della coordinazione, non tutta la clausola: in "put
+				// the sword in my pocket and fly to the moon" il secondo verbo, senza alias, va
+				// dichiarato, e uno span che lo copre lo faceva passare per gia' eseguito.
+				int frame_end = clause_end;
+				{
+					const String clause_lower = clause.to_lower();
+					int search_from = 0;
+					while (true) {
+						const int conjunction = clause_lower.find(" and ", search_from);
+						if (conjunction < 0) break;
+						const Array after = tokenize(clause_lower.substr(conjunction + 5));
+						if (!after.is_empty() && is_verb_token(after[0]) && String(after[0]) == lemma(after[0])) { frame_end = MIN(clause_end, safe_clause_start + conjunction); break; }
+						search_from = conjunction + 5;
+					}
+				}
+				frame["source_spans"] = source_span_array(normalized_input, safe_clause_start, frame_end);
+				// Una coordinazione e' una sequenza, non una dipendenza: "sit on the chair and open
+				// the door" non ha bisogno della sedia per aprire. Dipende dal frame prima solo chi
+				// rimanda indietro col bersaglio ("give **it** to me"). Fino al 2026-09-23 ogni
+				// frame dipendeva dal precedente e il GDScript doveva rifare la distinzione
+				// (tracker Analizzatore #72). L'ordine dei passi resta quello della frase.
+				// "then", "afterwards", "finally", il punto: li' l'utente chiede un ordine, e la
+				// dipendenza resta. Solo la "and" semplice e' una coordinazione senza dipendenza.
+				const String separator = separator_start >= 0 && safe_clause_start > separator_start ? normalized_input.substr(separator_start, safe_clause_start - separator_start).to_lower() : String();
+				const Array separator_tokens = tokenize(separator);
+				bool plain_coordination = separator_tokens.has("and") && !separator.contains(";") && !separator.contains(".");
+				for (const char *sequence : {"then", "after", "afterwards", "finally", "next", "later", "first", "before"}) if (separator_tokens.has(String(sequence))) plain_coordination = false;
+				if (clause.to_lower().begins_with("then ") || clause.to_lower().begins_with("afterwards ") || clause.to_lower().begins_with("finally ") || clause.to_lower().begins_with("next ")) plain_coordination = false;
+				const String dependency_object = Dictionary(frame.get("semantic_roles", Dictionary())).get("object", "");
+				if (plain_coordination && Array(frame.get("reference_targets", Array())).is_empty() && !string_array({"it", "them", "this", "that", "him", "her", "those", "these"}).has(dependency_object)) frame["dependency_refs"] = Array();
 				frames.append(frame);
 			}
 			// "wait—open the door": un richiamo dell'attenzione detto da solo, subito

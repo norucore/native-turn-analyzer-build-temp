@@ -135,3 +135,17 @@ water#6	drink
 juice#1	drink
 # #92: una cosa versata e' una macchia da pulire, non la bevanda (decisione A del 2026-09-15).
 spill#1	mess,fixed_in_place
+# 2026-09-21, Analizzatore#118: i rami scelti dalla misura di copertura, non dagli aneddoti.
+# `structure#1` intero sarebbe stato una riga sola, ma porta dentro anche i sostegni (coatrack,
+# cavalletto), le ostruzioni e le sporgenze: "entra nell'attaccapanni". I rami qui sotto sono i
+# suoi sottorami in cui "place" vale davvero. `area#5` esclude gli scomparti (l'armadietto del
+# 2026-09-20) e i vani di stivaggio (cassetto, cassaforte), che non sono posti in cui si entra.
+establishment#4	place
+housing#1	place
+shelter#1	place
+building complex#1	place
+# floor#2 (piano di un edificio) PROVATO E TOLTO il 2026-09-21: porta dentro `story` e
+# `level`, e "read me a story" diventava "non vedo la storia qui". Guadagno: il solo `basement`.
+area#5	place	compartment#2;storage space#1
+conduit#1	passage
+spectacles#1	wearable_accessory,handheld

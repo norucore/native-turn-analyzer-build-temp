@@ -36,6 +36,8 @@ private:
 	mutable godot::Dictionary supplied_verb_lemmas;
 	void absorb_irregular_forms(const godot::Dictionary &capability_snapshot) const;
 	int find_lemma_phrase_start(const godot::String &text, const godot::String &phrase) const;
+	bool is_verb_token(const godot::String &token) const;
+	int verb_unit_length(const godot::Array &tokens, int start) const;
 	godot::Array split_clauses(const godot::String &input) const;
 	godot::String infer_clause_speech_act(const godot::String &text, const godot::Array &tokens, const godot::Array &lemmas) const;
 	godot::Dictionary extract_clause_roles(const godot::String &text, const godot::Array &tokens, const godot::Array &lemmas, const godot::String &speech_act) const;
