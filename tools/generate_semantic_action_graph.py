@@ -207,11 +207,14 @@ def generate(dict_dir: pathlib.Path, goap_dir: pathlib.Path, generalize: int = 0
     # Serve a coprire la coda lunga dei verbi senza scrivere elenchi: la gerarchia la sa gia'.
     # Spento per default: senza `--generalize` il file generato resta identico byte per byte.
     if generalize > 0 and "generalization" in policy:
-        rule = policy["generalization"]
         for action, anchor_offset, *_ in sorted(anchors, key=lambda row: row[0]):
             frontier, depth, visited = [anchor_offset], 0, {anchor_offset}
             while frontier and depth < generalize:
                 depth += 1
+                # Un modo diretto di fare l'azione ("hurl" e' un modo di "throw") e' piu' sicuro di
+                # uno a due passi: la confidenza per profondita' sta nei dati (`generalization_1`),
+                # e sotto la soglia del Cervello si racconta senza cambiare il mondo (#113).
+                rule = policy.get("generalization_%d" % depth, policy["generalization"])
                 nxt = []
                 for offset in frontier:
                     for symbol, target in synsets[offset]["links"]:
@@ -292,7 +295,7 @@ def main() -> None:
     parser.add_argument("--goap", required=True, type=pathlib.Path)
     parser.add_argument("--out", required=True, type=pathlib.Path)
     parser.add_argument("--check", action="store_true")
-    parser.add_argument("--generalize", type=int, default=0, help="profondita' dei troponimi da mappare sull'azione (0 = spento)")
+    parser.add_argument("--generalize", type=int, default=2, help="profondita' dei troponimi da mappare sull'azione (0 = spento; 2 dal 2026-09-23, Analizzatore#134)")
     args = parser.parse_args()
     graph = generate(args.dict, args.goap, args.generalize)
     digest = hashlib.sha256(graph.encode("utf-8")).hexdigest()

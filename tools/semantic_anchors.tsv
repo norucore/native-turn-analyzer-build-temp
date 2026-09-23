@@ -2,10 +2,10 @@
 search	01315613	information	object	located	reversible	
 create	01617192	creation	object	created	conditional	resource_change
 move_to	01835496	locomotion	destination	position_changed	reversible	
-pickup	01452546	inventory	object	carried	reversible	
+pickup	01207402	inventory	object	carried	reversible	
 drop	01489465	inventory	object	released	reversible	
 give	02199590	social_transfer	object,recipient	transferred	conditional	ownership_change
-equip	02339413	inventory	object	equipped	reversible	
+equip	00050652	inventory	object	equipped	reversible	
 examine	00644583	perception	object	inspected	reversible	
 turn_around	01907258	locomotion	direction	orientation_changed	reversible	
 lie_down	01547001	posture	self	lying	reversible	
@@ -14,11 +14,13 @@ stand	01546111	posture	self	standing	reversible
 close	01345109	object_state	object	closed	reversible	
 speak	00941990	social	recipient	communicated	reversible	
 activate	01643657	object_state	object	active	reversible	
-deactivate	00190682	object_state	object	inactive	reversible	
-break	00364064	destruction	object	broken	irreversible	destructive
+deactivate	00191517	object_state	object	inactive	reversible	
+break	00334996	destruction	object	broken	irreversible	destructive
 rest	01545883	recovery	self	rested	reversible	
 combine	00394813	crafting	object,object	combined	conditional	resource_change
 approach	02053941	locomotion	target	near_target	reversible	
 descend	01970826	locomotion	destination	lower_position	reversible	physical
 climb	01921964	locomotion	destination	higher_position	reversible	physical
 place	01494310	objectacquisitiondisposition	object,destination	placed	reversible	
+play	01072949	social	object	played	reversible	
+cook	00322847	objectinteractiontransformation	object	cooked	irreversible	

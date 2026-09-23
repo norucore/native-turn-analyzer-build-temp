@@ -242,7 +242,7 @@ String trim_target_span(String target) {
 // "put the banana in the box", "combine the dust with the resin": la cosa resta nel
 // bersaglio, il posto o il secondo oggetto va in `location` (tracker #70, #25). Solo
 // quando dopo la preposizione comincia un gruppo nominale con determinante.
-void split_object_location(String &target, String &location) {
+void split_object_location(String &target, String &location, String *preposition_used = nullptr) {
 	int split_at = -1;
 	int split_length = 0;
 	// "throw your hat at the zombie": anche la direzione separa (tracker Analizzatore #103).
@@ -261,12 +261,15 @@ void split_object_location(String &target, String &location) {
 		}
 	}
 	if (split_at <= 0) return;
+	if (preposition_used != nullptr) *preposition_used = target.substr(split_at, split_length).strip_edges();
 	location = trim_target_span(target.substr(split_at + split_length));
 	target = trim_target_span(target.left(split_at));
 }
 
 void extract_give_recipient(String &target, String &recipient) {
-	for (const char *raw_recipient : {"the user", "user", "me", "us", "him", "her", "them"}) {
+	// "you": "I throw you the ball", "I hand you a muffin" (fase2 di mcp_scene_facts_replay,
+	// Analizzatore#133). Nella seconda persona chi riceve e' il personaggio.
+	for (const char *raw_recipient : {"the user", "user", "me", "us", "you", "him", "her", "them"}) {
 		const String surface = raw_recipient;
 		const String normalized = (surface == "me" || surface == "us" || surface == "user" || surface == "the user") ? "user" : surface;
 		if (target == surface) {
@@ -875,6 +878,14 @@ Dictionary NativeTurnAnalyzer::extract_clause_roles(const String &text, const Ar
 		payload = trim_target_span(payload.left(recipient_boundary));
 	} else {
 		payload = trim_target_span(payload);
+		// "I throw you the ball", "hand me the cup": lo stesso destinatario del compilatore
+		// (`extract_give_recipient`), cosi' la cosa nominata e' "ball" e non "you the ball".
+		// "hug me": se dopo il pronome non resta niente, il pronome e' il bersaglio.
+		String pronoun_recipient;
+		const String before_recipient = payload;
+		extract_give_recipient(payload, pronoun_recipient);
+		if (!pronoun_recipient.is_empty() && !payload.strip_edges().is_empty()) recipient = pronoun_recipient;
+		else payload = before_recipient;
 	}
 	roles["object"] = payload;
 	roles["object_or_class"] = payload;
@@ -1158,8 +1169,16 @@ Array NativeTurnAnalyzer::split_action_coordinations(const Array &clauses, const
 			if (right.to_lower().begins_with("and ")) right = right.substr(4).strip_edges();
 			String left = remaining.left(boundary).strip_edges().trim_suffix(",");
 			int right_start = -1, right_end = -1, left_start = -1, left_end = -1;
-			const String right_alias = leading_action(right, right_start, right_end);
+			String right_alias = leading_action(right, right_start, right_end);
 			const String left_alias = leading_action(left, left_start, left_end);
+			// Dopo la virgola un verbo e' seguito dalla fine del pezzo, da un determinante o pronome,
+			// o da una particella: "stand up, wave, and smile", "open it, close the window". Seguito
+			// da un nome nudo e' un aggettivo: "the red, round ball" (con il grafo generalizzato
+			// "round" e' anche un verbo, 2026-09-23).
+			if (!is_and && !right_alias.is_empty()) {
+				const Array after_alias = tokenize(right.substr(right_end));
+				if (!after_alias.is_empty() && !string_array({"the", "a", "an", "my", "your", "his", "her", "its", "our", "their", "this", "that", "these", "those", "some", "it", "them", "me", "us", "him", "up", "down", "out", "off", "on", "in", "into", "onto", "over", "away", "back", "to", "at", "with", "from", "for", "and", "please", "now", "again", "here", "there"}).has(after_alias[0])) right_alias = String();
+			}
 			if (right_alias.is_empty()) {
 				// Un verbo, piu' oggetti: "open the door and the window" apre anche la
 				// finestra (tracker #38). Solo quando la destra e' un gruppo nominale
@@ -1826,7 +1845,15 @@ Dictionary NativeTurnAnalyzer::build_frame(int index, const String &raw, const D
 	// Prima arrivava tutto come bersaglio, e il grounding non sapeva fra quali due
 	// oggetti scegliere.
 	String location;
-	split_object_location(target, location);
+	String location_preposition;
+	split_object_location(target, location, &location_preposition);
+	// "put the muffin in my mouth": la preposizione dice il gesto. "in", "into", "inside"
+	// mettono dentro (`insert`), "on", "onto" appoggiano sopra (`place`). Fino al 2026-09-23
+	// "put" dava sempre `place`, e il boccone finiva appoggiato sulla bocca (Analizzatore#133).
+	if (action == "place" && Dictionary(registry.get("actions", Dictionary())).has("insert") && string_array({"in", "into", "inside"}).has(location_preposition)) {
+		action = "insert";
+		Array evidence = frame["parser_evidence"]; evidence.append("preposition:containment"); frame["parser_evidence"] = evidence;
+	}
 	// "pick up the phone and check if there's a message": il complemento e' una frase, e la cosa
 	// da guardare e' quella dell'azione di prima (tracker Analizzatore #84).
 	if (action_payload.begins_with("if ") || action_payload.begins_with("whether ")) {
