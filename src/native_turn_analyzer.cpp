@@ -715,6 +715,10 @@ String NativeTurnAnalyzer::infer_clause_speech_act(const String &text, const Arr
 			verb_initial = is_verb_token(first_word) && first_word == base && !is_modal_word(first_word) && base != "be" && base != "do" && base != "have";
 		}
 	}
+	// "can i borrow a highlighter?", "may i try this on?": chiedere il permesso e' una richiesta
+	// rivolta a chi ascolta, non una domanda sullo stato. Modale + "i"/"we" + verbo.
+	const bool permission_request = tokens.size() >= 3 && string_array({"can", "could", "may"}).has(tokens[0]) && string_array({"i", "we"}).has(tokens[1]) && is_verb_token(tokens[2]);
+	if (permission_request) return "request";
 	if (lower.ends_with("?") && !modal_request && !verb_initial) return "question";
 	// Ausiliare seguito dal soggetto: "do u ever get bored", "are you ok", "have you seen it".
 	// E' la domanda anche senza punto interrogativo, come in `build_frame`.
@@ -795,6 +799,7 @@ Dictionary NativeTurnAnalyzer::extract_clause_roles(const String &text, const Ar
 	// resto della frase, che e' cio' che il ponte semantico poi trasporta.
 	const int modal_predicate_start = inverted_modal_predicate_start(tokens, true);
 	if (modal_predicate_start >= 0) predicate_index = modal_predicate_start;
+	else if (tokens.size() >= 3 && string_array({"can", "could", "may"}).has(tokens[0]) && string_array({"i", "we"}).has(tokens[1])) predicate_index = 2;
 	else if (lower.begins_with("please ")) predicate_index = 1;
 	else if (starts_any(lower, string_array({"i need you to ", "i want you to ", "i would like you to ", "i'd like you to ", "i am asking you to "}))) {
 		for (int index = 0; index < tokens.size(); ++index) if (String(tokens[index]) == "to") predicate_index = index + 1;
