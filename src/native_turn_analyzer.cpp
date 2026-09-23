@@ -836,8 +836,14 @@ Dictionary NativeTurnAnalyzer::extract_clause_roles(const String &text, const Ar
 		// imperativo e' un verbo che WordNet non conosce ("flurbulate the lamp") e va dichiarata,
 		// purche' non sia una parola di classe chiusa (pronome, determinante, parola wh).
 		if (found < 0 && speech_act == "request") {
+			// Come in `infer_clause_speech_act`: segnali del discorso e vocativo con la virgola
+			// ("Sasha, flurbulate the lamp") non sono il verbo.
 			int head = predicate_index;
-			while (head < tokens.size() && is_discourse_marker(tokens[head])) ++head;
+			String rest = lower;
+			while (head < tokens.size() && (is_discourse_marker(tokens[head]) || rest.begins_with(String(tokens[head]) + String(",")))) {
+				rest = rest.substr(String(tokens[head]).length()).trim_prefix(",").strip_edges();
+				++head;
+			}
 			const bool closed_class = head >= tokens.size() || determiners.has(tokens[head]) || subject_pronouns.has(tokens[head]) || string_array({"what", "who", "whom", "whose", "which", "where", "when", "why", "how", "there", "here", "let's"}).has(tokens[head]) || String(tokens[head]).find("'") > 0;
 			// Serve un complemento che cominci come un gruppo nominale: "flurbulate the lamp" si,
 			// "whatever." e "goodnight Sasha" no.
